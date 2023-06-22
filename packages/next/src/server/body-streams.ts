@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'http'
-import { PassThrough, Readable } from 'stream'
+import { PassThrough, pipeline, type Readable, Writable } from 'stream'
 
 export function requestToBodyStream(
   context: { ReadableStream: typeof ReadableStream },
@@ -87,5 +87,75 @@ export function getCloneableBody<T extends IncomingMessage>(
       buffered = p2
       return p1
     },
+  }
+}
+
+export function pipeNodeToNode(src: Readable, dest: Writable) {
+  return new Promise<void>((res, rej) => {
+    pipeline(src, dest, (err) => {
+      dest.end()
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        rej(err)
+      } else {
+        res()
+      }
+    })
+  })
+}
+
+/**
+ * FlushStream acts as a Writable interface for another Writable. Every time
+ * data is pushed into the stream, it will be immediately written to the other,
+ * and the other writable will be flushed. This allows us to send small chunks
+ * of data to the browser even when GZIP encoding is enabled.
+ */
+export class FlushStream extends Writable {
+  declare _dest: Writable & { flush: () => void }
+
+  // In order to signal that the dest is full, we need to return the last
+  // result of calling `dest.write()` to the caller of `flush.write()`.
+  _writeCb: null | ((e?: Error | null) => void) = null
+
+  constructor(dest: Writable & { flush: () => void }) {
+    super()
+    this._dest = dest
+
+    this.once('close', () => dest.end())
+    this.once('error', (e) => dest.destroy(e))
+    dest.once('close', () => this.end())
+    dest.once('error', (e) => this.destroy(e))
+    dest.on('drain', () => {
+      const cb = this._writeCb
+      this._writeCb = null
+      cb?.()
+      this.emit('drain')
+    })
+  }
+
+  write(chunk: any, encoding?: any, callback?: any): boolean {
+    super.write(chunk, encoding, callback)
+    // If there's no pending writeCb, then the caller is free to continue
+    // writing.
+    return this._writeCb === null
+  }
+
+  _writev(
+    chunks: { chunk: any; encoding: BufferEncoding }[],
+    callback: (error?: Error | null | undefined) => void
+  ): void {
+    let writable = true
+    for (const { chunk, encoding } of chunks) {
+      writable = this._dest.write(chunk, encoding)
+    }
+    this._dest.flush()
+
+    // If the last call to dest.write returned true, then our caller can
+    // continue writing. If not, then we need to wait until it the dest emits a
+    // drain event.
+    if (writable) {
+      callback()
+    } else {
+      this._writeCb = callback
+    }
   }
 }
