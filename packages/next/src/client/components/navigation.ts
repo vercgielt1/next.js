@@ -281,5 +281,10 @@ export function useSelectedLayoutSegment(
     : selectedLayoutSegment
 }
 
-export { redirect, permanentRedirect, RedirectType } from './redirect'
-export { notFound } from './not-found'
+export {
+  redirect,
+  isRedirectError,
+  permanentRedirect,
+  RedirectType,
+} from './redirect'
+export { notFound, isNotFoundError } from './not-found'
