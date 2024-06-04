@@ -3,7 +3,7 @@ import type { CacheHandler, CacheHandlerContext, CacheHandlerValue } from './'
 import type { CacheFs } from '../../../shared/lib/utils'
 import type { CachedFetchValue } from '../../response-cache'
 
-import LRUCache from 'next/dist/compiled/lru-cache'
+import { LRUCache } from 'next/dist/compiled/lru-cache'
 import path from '../../../shared/lib/isomorphic/path'
 import {
   NEXT_CACHE_TAGS_HEADER,
@@ -54,8 +54,9 @@ export default class FileSystemCache implements CacheHandler {
         }
 
         memoryCache = new LRUCache({
-          max: ctx.maxMemoryCacheSize,
-          length({ value }) {
+          max: 250,
+          maxEntrySize: ctx.maxMemoryCacheSize,
+          sizeCalculation({ value }) {
             if (!value) {
               return 25
             } else if (value.kind === 'REDIRECT') {
@@ -171,7 +172,6 @@ export default class FileSystemCache implements CacheHandler {
     const [key, ctx = {}] = args
     const { tags, softTags, kindHint, isRoutePPREnabled } = ctx
     let data = memoryCache?.get(key)
-
     if (this.debug) {
       console.log('get', key, tags, kindHint, !!data)
     }
