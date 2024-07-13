@@ -705,7 +705,7 @@ export default async function build(
 
     await nextBuildSpan.traceAsyncFn(async () => {
       // attempt to load global env values so they are available in next.config.js
-      const { loadedEnvFiles } = nextBuildSpan
+      const { loadedEnvFiles, combinedEnv } = nextBuildSpan
         .traceChild('load-dotenv')
         .traceFn(() => loadEnvConfig(dir, false, Log))
       NextBuildContext.loadedEnvFiles = loadedEnvFiles
@@ -723,6 +723,24 @@ export default async function build(
             turborepoAccessTraceResult
           )
         )
+
+      if (
+        Array.isArray(config.experimental.requiredEnv) &&
+        config.experimental.requiredEnv.length > 0
+      ) {
+        const envs = { ...config.env, ...combinedEnv }
+        const missingKeys = config.experimental.requiredEnv.filter(
+          (key) => !(key in envs)
+        )
+
+        if (missingKeys.length > 0) {
+          Log.error(
+            `Missing required environment variables: ${missingKeys.join(', ')}`
+          )
+          process.exit(1)
+        }
+      }
+
       loadedConfig = config
 
       process.env.NEXT_DEPLOYMENT_ID = config.deploymentId || ''

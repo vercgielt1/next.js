@@ -496,6 +496,10 @@ export interface ExperimentalConfig {
    * The number of times to retry static generation (per page) before giving up.
    */
   staticGenerationRetryCount?: number
+
+  // TODO: Add documentation
+  // keys of environment variables that are required
+  requiredEnv?: string[]
 }
 
 export type ExportPathMap = {
@@ -977,6 +981,7 @@ export const defaultConfig: NextConfig = {
     turbotrace: undefined,
     typedRoutes: false,
     typedEnv: false,
+    requiredEnv: [],
     instrumentationHook: false,
     clientTraceMetadata: undefined,
     parallelServerCompiles: false,
