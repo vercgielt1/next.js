@@ -22,6 +22,7 @@ import { sendEtagResponse } from './send-payload'
 import { getContentType, getExtension } from './serve-static'
 import * as Log from '../build/output/log'
 import isError from '../lib/is-error'
+import { parseUrl } from '../lib/url'
 
 type XCacheHeader = 'MISS' | 'HIT' | 'STALE'
 
@@ -213,6 +214,16 @@ export class ImageOptimizerCache {
       }
     }
 
+    const parsedUrl = parseUrl(url)
+    if (parsedUrl) {
+      const decodedPathname = decodeURIComponent(parsedUrl.pathname)
+      if (/\/_next\/image($|\/)/.test(decodedPathname)) {
+        return {
+          errorMessage: '"url" parameter cannot be recursive',
+        }
+      }
+    }
+
     let isAbsolute: boolean
 
     if (url.startsWith('/')) {
@@ -242,19 +253,28 @@ export class ImageOptimizerCache {
       return { errorMessage: '"w" parameter (width) is required' }
     } else if (Array.isArray(w)) {
       return { errorMessage: '"w" parameter (width) cannot be an array' }
+    } else if (!/^[0-9]+$/.test(w)) {
+      return {
+        errorMessage: '"w" parameter (width) must be an integer greater than 0',
+      }
     }
 
     if (!q) {
       return { errorMessage: '"q" parameter (quality) is required' }
     } else if (Array.isArray(q)) {
       return { errorMessage: '"q" parameter (quality) cannot be an array' }
+    } else if (!/^[0-9]+$/.test(q)) {
+      return {
+        errorMessage:
+          '"q" parameter (quality) must be an integer between 1 and 100',
+      }
     }
 
     const width = parseInt(w, 10)
 
     if (width <= 0 || isNaN(width)) {
       return {
-        errorMessage: '"w" parameter (width) must be a number greater than 0',
+        errorMessage: '"w" parameter (width) must be an integer greater than 0',
       }
     }
 
@@ -273,12 +293,12 @@ export class ImageOptimizerCache {
       }
     }
 
-    const quality = parseInt(q)
+    const quality = parseInt(q, 10)
 
     if (isNaN(quality) || quality < 1 || quality > 100) {
       return {
         errorMessage:
-          '"q" parameter (quality) must be a number between 1 and 100',
+          '"q" parameter (quality) must be an integer between 1 and 100',
       }
     }
 
