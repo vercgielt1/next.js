@@ -384,7 +384,8 @@ export class IncrementalCache implements IncrementalCacheType {
       tags?: string[]
       softTags?: string[]
       isRoutePPREnabled?: boolean
-    }
+      status?: number
+    } = {}
   ): Promise<IncrementalCacheEntry | null> {
     // we don't leverage the prerender cache in dev mode
     // so that getStaticProps is always called for easier debugging
@@ -494,6 +495,7 @@ export class IncrementalCache implements IncrementalCacheType {
       fetchIdx?: number
       tags?: string[]
       isRoutePPREnabled?: boolean
+      status?: number
     }
   ) {
     if (this.disableForTestmode || (this.dev && !ctx.fetchCache)) return
