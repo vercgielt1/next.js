@@ -10,7 +10,8 @@ members = [
   "crates/next-build",
   "crates/next-core",
   "crates/next-custom-transforms",
-  "turbopack/crates/*"
+  "turbopack/crates/*",
+  "turbopack/xtask",
 ]
 
 [workspace.lints.clippy]
@@ -84,21 +85,21 @@ turbopack-trace-utils = { path = "turbopack/crates/turbopack-trace-utils" }
 turbopack-wasm = { path = "turbopack/crates/turbopack-wasm" }
 
 # SWC crates
-swc_core = { version = "0.96.9", features = [
+swc_core = { version = "0.102.0", features = [
   "ecma_loader_lru",
   "ecma_loader_parking_lot",
 ] }
-testing = { version = "0.36.0" }
+testing = { version = "0.39.0" }
 
 # Keep consistent with preset_env_base through swc_core
 browserslist-rs = { version = "0.16.0" }
 miette = { version = "5.10.0", features = ["fancy"] }
-mdxjs = "0.2.5"
-modularize_imports = { version = "0.68.7" }
-styled_components = { version = "0.96.6" }
-styled_jsx = { version = "0.73.10" }
-swc_emotion = { version = "0.72.6" }
-swc_relay = { version = "0.44.5" }
+mdxjs = "0.2.8"
+modularize_imports = { version = "0.68.23" }
+styled_components = { version = "0.96.22" }
+styled_jsx = { version = "0.73.31" }
+swc_emotion = { version = "0.72.21" }
+swc_relay = { version = "0.44.24" }
 
 # General Deps
 
@@ -131,7 +132,7 @@ async-trait = "0.1.64"
 atty = "0.2.14"
 bytes = "1.1.0"
 chrono = "0.4.23"
-clap = "4.5.2"
+clap = { version = "4.5.2", features = ["derive"] }
 concurrent-queue = "2.5.0"
 console = "0.15.5"
 console-subscriber = "0.1.8"
@@ -198,7 +199,7 @@ smallvec = { version = "1.13.1", features = [
   "union",
   "const_new",
 ] }
-sourcemap = "8.0.1"
+sourcemap = "9.0.0"
 syn = "1.0.107"
 tempfile = "3.3.0"
 thiserror = "1.0.48"
@@ -207,7 +208,7 @@ tokio = "1.25.0"
 tokio-util = { version = "0.7.7", features = ["io"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
-triomphe = "0.1.13"
+triomphe = { git = "https://github.com/sokra/triomphe", branch = "sokra/unstable" }
 unicode-segmentation = "1.10.1"
 unsize = "1.1.0"
 url = "2.2.2"
