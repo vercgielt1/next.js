@@ -275,6 +275,7 @@ async fn run_test(resource: RcStr) -> Result<Vc<FileSystemPath>> {
             },
             css: CssOptionsContext {
                 use_swc_css: options.use_swc_css,
+                enable_css_transform: true,
                 ..Default::default()
             },
             preset_env_versions: Some(env),
@@ -283,6 +284,7 @@ async fn run_test(resource: RcStr) -> Result<Vc<FileSystemPath>> {
                 ModuleOptionsContext {
                     css: CssOptionsContext {
                         use_swc_css: options.use_swc_css,
+                        enable_css_transform: true,
                         ..Default::default()
                     },
                     ..Default::default()
