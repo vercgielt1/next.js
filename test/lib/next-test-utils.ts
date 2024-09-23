@@ -880,6 +880,67 @@ export async function assertNoRedbox(browser: BrowserInterface) {
   }
 }
 
+type Redbox = {
+  category: string
+  description: string
+  location: string
+  codeFrame: string
+  callStack: {
+    copied: string
+    expanded: string
+  }
+}
+
+export function normalizeCodeLocInfo(str: string): string | undefined {
+  return str.replace(/\n +(?:at|in) ([\S]+)[^\n]*/g, function (m, name) {
+    return '\n    at ' + name + ' (**)'
+  })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function normalizeRedbox(redbox: Redbox) {
+  // if the received redbox contains "**" wildcard, then we will
+  // allow that certain values to be passed without exact matching
+}
+
+export async function assertRedbox(
+  browser: BrowserInterface,
+  expectedRedbox: Redbox
+) {
+  try {
+    await retry(
+      async () => {
+        await assertHasRedbox(browser)
+        await expandCallStackDetails(browser)
+
+        await browser.waitForElementByCss('[data-nextjs-frame-source]')
+
+        const redbox = {
+          category: await getRedboxCategory(browser),
+          description: await getRedboxDescription(browser),
+          location: await getRedboxLocation(browser),
+          codeFrame: await getRedboxCodeFrame(browser),
+          callStack: {
+            copied: normalizeCodeLocInfo(
+              await getRedboxOriginalCallStack(browser)
+            ),
+            expanded: normalizeCodeLocInfo(await getRedboxCallStack(browser)),
+          },
+        }
+
+        expect(redbox).toMatchInlineSnapshot(expectedRedbox)
+      },
+      5000,
+      200,
+      'assertRedbox'
+    )
+  } catch (errorCause) {
+    const error = new Error('Expected Redbox but found none')
+    Error.captureStackTrace(error, assertRedbox)
+    throw error
+  }
+}
+
 export async function hasErrorToast(
   browser: BrowserInterface
 ): Promise<boolean> {
@@ -912,6 +973,63 @@ export async function getRedboxHeader(browser: BrowserInterface) {
     10000,
     500,
     'getRedboxHeader'
+  )
+}
+
+export async function getRedboxCategory(browser: BrowserInterface) {
+  return retry(
+    () => {
+      return evaluate(browser, () => {
+        const portal = [].slice
+          .call(document.querySelectorAll('nextjs-portal'))
+          .find((p) =>
+            p.shadowRoot.querySelector('#nextjs__container_errors_label')
+          )
+        const root = portal?.shadowRoot
+        return root?.querySelector('#nextjs__container_errors_label')?.innerText
+      })
+    },
+    10000,
+    500,
+    'getRedboxCategory'
+  )
+}
+
+export async function getRedboxLocation(browser: BrowserInterface) {
+  return retry(
+    () => {
+      return evaluate(browser, () => {
+        const portal = [].slice
+          .call(document.querySelectorAll('nextjs-portal'))
+          .find((p) =>
+            p.shadowRoot.querySelector('[data-nextjs-error-location]')
+          )
+        const root = portal?.shadowRoot
+        return root?.querySelector('[data-nextjs-error-location]')?.innerText
+      })
+    },
+    10000,
+    500,
+    'getRedboxLocation'
+  )
+}
+
+export async function getRedboxCodeFrame(browser: BrowserInterface) {
+  return retry(
+    () => {
+      return evaluate(browser, () => {
+        const portal = [].slice
+          .call(document.querySelectorAll('nextjs-portal'))
+          .find((p) =>
+            p.shadowRoot.querySelector('[data-nextjs-codeframe-code]')
+          )
+        const root = portal?.shadowRoot
+        return root?.querySelector('[data-nextjs-codeframe-code]')?.innerText
+      })
+    },
+    10000,
+    500,
+    'getRedboxCodeFrame'
   )
 }
 
@@ -1237,6 +1355,19 @@ export async function expandCallStack(
     .click()
 }
 
+export async function expandCallStackDetails(
+  browser: BrowserInterface
+): Promise<void> {
+  await browser.waitForElementByCss(
+    '[data-nextjs-collapsed-call-stack-details]',
+    30000
+  )
+  const details = await browser.elementsByCss(
+    '[data-nextjs-collapsed-call-stack-details]'
+  )
+  await Promise.all(details.map((detail) => detail.click()))
+}
+
 export async function getRedboxCallStack(
   browser: BrowserInterface
 ): Promise<string> {
@@ -1250,6 +1381,25 @@ export async function getRedboxCallStack(
   )
 
   return callStackFrameTexts.join('\n').trim()
+}
+
+export async function getRedboxOriginalCallStack(
+  browser: BrowserInterface
+): Promise<string> {
+  await browser.waitForElementByCss(
+    '[data-nextjs-data-runtime-error-copy-stack]',
+    30000
+  )
+
+  const copyButton = await browser.elementByCss(
+    '[data-nextjs-data-runtime-error-copy-stack]'
+  )
+
+  await copyButton.click()
+
+  return evaluate(browser, async () => {
+    return await navigator.clipboard.readText()
+  })
 }
 
 export async function getVersionCheckerText(

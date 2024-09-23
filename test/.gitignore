@@ -2,6 +2,7 @@
 .vscode
 
 e2e/**/tsconfig.json
+development/**/tsconfig.json
 production/**/tsconfig.json
 
 test-junit-report/
