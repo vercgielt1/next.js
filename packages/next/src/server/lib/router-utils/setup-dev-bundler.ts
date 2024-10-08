@@ -573,7 +573,7 @@ async function startWatcher(opts: SetupOpts) {
         if (envChange) {
           const { loadedEnvFiles } = loadEnvConfig(
             dir,
-            true,
+            process.env.NODE_ENV === 'development',
             Log,
             true,
             (envFilePath) => {
