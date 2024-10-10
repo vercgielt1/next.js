@@ -223,13 +223,18 @@ function assignDefaults(
   // If this was defaulted to true, it implies that the configuration was
   // overridden for testing to be defaulted on.
   if (defaultConfig.experimental?.ppr) {
-    Log.warn(
+    Log.warnOnce(
       `\`experimental.ppr\` has been defaulted to \`true\` because \`__NEXT_EXPERIMENTAL_PPR\` was set to \`true\` during testing.`
     )
   }
   if (defaultConfig.experimental?.pprFallbacks) {
-    Log.warn(
+    Log.warnOnce(
       `\`experimental.pprFallbacks\` has been defaulted to \`true\` because \`__NEXT_EXPERIMENTAL_PPR\` was set to \`true\` during testing.`
+    )
+  }
+  if (defaultConfig.experimental?.dynamicIO) {
+    Log.warnOnce(
+      `\`experimental.dynamicIO\` has been defaulted to \`true\` because \`__NEXT_EXPERIMENTAL_DIO\` was set to \`true\` during testing.`
     )
   }
 

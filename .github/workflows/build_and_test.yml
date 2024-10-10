@@ -506,6 +506,21 @@ jobs:
       stepName: 'test-ppr-prod-${{ matrix.group }}'
     secrets: inherit
 
+  test-ppr-dio:
+    name: test ppr + dio
+    needs: ['optimize-ci', 'changes', 'build-native', 'build-next']
+    if: ${{ needs.optimize-ci.outputs.skip == 'false' && needs.changes.outputs.docs-only == 'false' && (github.ref == 'refs/heads/canary' || github.head_ref == '10-10-run_ci_for_ppr_dio') }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4]
+    uses: ./.github/workflows/build_reusable.yml
+    with:
+      afterBuild: __NEXT_EXPERIMENTAL_PPR=true __NEXT_EXPERIMENTAL_DIO=true NEXT_TEST_CONTINUE_ON_ERROR=1 NEXT_TEST_MODE=start node run-tests.js --timings -g ${{ matrix.group }} -c ${TEST_CONCURRENCY} --type production
+      stepName: 'test-ppr-dio-${{ matrix.group }}'
+    secrets: inherit
+
   report-test-results-to-datadog:
     needs:
       [
