@@ -50,7 +50,7 @@ import {
   createTrackedMetadataContext,
   createMetadataContext,
 } from '../../lib/metadata/metadata-context'
-import { withRequestStore } from '../async-storage/with-request-store'
+import { createRequestStoreForRender } from '../async-storage/request-store'
 import { withWorkStore } from '../async-storage/with-work-store'
 import { isNotFoundError } from '../../client/components/not-found'
 import {
@@ -58,7 +58,7 @@ import {
   isRedirectError,
   getRedirectStatusCodeFromError,
 } from '../../client/components/redirect'
-import { getImplicitTags } from '../lib/patch-fetch'
+import { getImplicitTags } from '../lib/implicit-tags'
 import { AppRenderSpan, NextNodeServerSpan } from '../lib/trace/constants'
 import { getTracer } from '../lib/trace/tracer'
 import { FlightRenderResult } from './flight-render-result'
@@ -375,6 +375,7 @@ async function generateDynamicRSCPayload(
     skipFlight: boolean
   }
 ): Promise<RSCPayload> {
+  ctx.requestStore.phase = 'render'
   // Flight data that is going to be passed to the browser.
   // Currently a single item array but in the future multiple patches might be combined in a single request.
 
@@ -1129,6 +1130,32 @@ async function renderToHTMLOrFlightImpl(
       }
     }
 
+    // Per-segment prefetch data
+    //
+    // All of the segments for a page are generated simultaneously, including
+    // during revalidations. This is to ensure consistency, because it's
+    // possible for a mismatch between a layout and page segment can cause the
+    // client to error during rendering. We want to preserve the ability of the
+    // client to recover from such a mismatch by re-requesting all the segments
+    // to get a consistent view of the page.
+    //
+    // TODO (Per Segment Prefetching): This is placeholder data. Populate with
+    // the actual data generated during prerender.
+    if (renderOpts.experimental.isRoutePPREnabled === true) {
+      const placeholder = Buffer.from(
+        'TODO (Per Segment Prefetching): Not yet implemented\n'
+      )
+      metadata.segmentFlightData = new Map([
+        // Root segment
+        ['/', placeholder],
+        ['/blog', placeholder],
+        // TODO: Update the client to use the same encoding for segment paths that
+        // we use here, so we don't have to convert between them. Needs to be
+        // filesystem safe.
+        ['/blog/[post]-1-d', placeholder],
+      ])
+    }
+
     return new RenderResult(await streamToString(response.stream), options)
   } else {
     // We're rendering dynamically
@@ -1167,6 +1194,7 @@ async function renderToHTMLOrFlightImpl(
           const notFoundLoaderTree = createNotFoundLoaderTree(loaderTree)
           res.statusCode = 404
           const stream = await renderToStreamWithTracing(
+            requestStore,
             req,
             res,
             ctx,
@@ -1192,6 +1220,7 @@ async function renderToHTMLOrFlightImpl(
     }
 
     const stream = await renderToStreamWithTracing(
+      requestStore,
       req,
       res,
       ctx,
@@ -1271,49 +1300,54 @@ export const renderToHTMLOrFlight: AppPageRender = (
     )
   }
 
-  return withRequestStore(
-    renderOpts.ComponentMod.workUnitAsyncStorage,
-    {
-      req,
-      url,
-      res,
-      renderOpts,
-      isHmrRefresh,
-      serverComponentsHmrCache,
-    },
-    (requestStore) => {
-      if (requestStore.type !== 'request') {
-        // TODO: Refactor to not need a RequestStore for prerenders.
-        throw new Error('This should never happen.')
-      }
-      return withWorkStore(
-        renderOpts.ComponentMod.workAsyncStorage,
-        {
-          page: renderOpts.routeModule.definition.page,
-          fallbackRouteParams,
-          renderOpts,
-          requestEndedState,
-          isPrefetchRequest: Boolean(req.headers[NEXT_ROUTER_PREFETCH_HEADER]),
-        },
-        (workStore) =>
-          renderToHTMLOrFlightImpl(
-            req,
-            res,
-            pagePath,
-            query,
-            renderOpts,
-            requestStore,
-            workStore,
-            parsedRequestHeaders,
-            requestEndedState,
-            postponedState
-          )
-      )
-    }
+  const implicitTags = getImplicitTags(
+    renderOpts.routeModule.definition.page,
+    url,
+    fallbackRouteParams
   )
+  // TODO: We need to refactor this so that prerenders do not rely upon the
+  // existence of an outer scoped request store. Then we should move this
+  // store generation inside the appropriate scope like `renderToStream` where
+  // we know we're handling a Request and not a Prerender
+  const requestStore = createRequestStoreForRender(
+    req,
+    res,
+    url,
+    implicitTags,
+    renderOpts.onUpdateCookies,
+    renderOpts.previewProps,
+    isHmrRefresh,
+    serverComponentsHmrCache
+  )
+  return workUnitAsyncStorage.run(requestStore, () => {
+    return withWorkStore(
+      renderOpts.ComponentMod.workAsyncStorage,
+      {
+        page: renderOpts.routeModule.definition.page,
+        fallbackRouteParams,
+        renderOpts,
+        requestEndedState,
+        isPrefetchRequest: Boolean(req.headers[NEXT_ROUTER_PREFETCH_HEADER]),
+      },
+      (workStore) =>
+        renderToHTMLOrFlightImpl(
+          req,
+          res,
+          pagePath,
+          query,
+          renderOpts,
+          requestStore,
+          workStore,
+          parsedRequestHeaders,
+          requestEndedState,
+          postponedState
+        )
+    )
+  })
 }
 
 async function renderToStream(
+  requestStore: RequestStore,
   req: BaseNextRequest,
   res: BaseNextResponse,
   ctx: AppRenderContext,
@@ -1404,9 +1438,17 @@ async function renderToStream(
 
   try {
     // This is a dynamic render. We don't do dynamic tracking because we're not prerendering
-    const RSCPayload = await getRSCPayload(tree, ctx, res.statusCode === 404)
+    const RSCPayload = await workUnitAsyncStorage.run(
+      requestStore,
+      getRSCPayload,
+      tree,
+      ctx,
+      res.statusCode === 404
+    )
     reactServerResult = new ReactServerResult(
-      ComponentMod.renderToReadableStream(
+      workUnitAsyncStorage.run(
+        requestStore,
+        ComponentMod.renderToReadableStream,
         RSCPayload,
         clientReferenceManifest.clientModules,
         {
@@ -1444,7 +1486,9 @@ async function renderToStream(
         const resume = require('react-dom/server.edge')
           .resume as (typeof import('react-dom/server.edge'))['resume']
 
-        const htmlStream = await resume(
+        const htmlStream = await workUnitAsyncStorage.run(
+          requestStore,
+          resume,
           <App
             reactServerStream={reactServerResult.tee()}
             preinitScripts={preinitScripts}
@@ -1481,7 +1525,9 @@ async function renderToStream(
     const renderToReadableStream = require('react-dom/server.edge')
       .renderToReadableStream as (typeof import('react-dom/server.edge'))['renderToReadableStream']
 
-    const htmlStream = await renderToReadableStream(
+    const htmlStream = await workUnitAsyncStorage.run(
+      requestStore,
+      renderToReadableStream,
       <App
         reactServerStream={reactServerResult.tee()}
         preinitScripts={preinitScripts}
@@ -1603,9 +1649,17 @@ async function renderToStream(
       '/_not-found/page'
     )
 
-    const errorRSCPayload = await getErrorRSCPayload(tree, ctx, errorType)
+    const errorRSCPayload = await workUnitAsyncStorage.run(
+      requestStore,
+      getErrorRSCPayload,
+      tree,
+      ctx,
+      errorType
+    )
 
-    const errorServerStream = ComponentMod.renderToReadableStream(
+    const errorServerStream = workUnitAsyncStorage.run(
+      requestStore,
+      ComponentMod.renderToReadableStream,
       errorRSCPayload,
       clientReferenceManifest.clientModules,
       {
@@ -1620,23 +1674,27 @@ async function renderToStream(
     }
 
     try {
-      const fizzStream = await renderToInitialFizzStream({
-        ReactDOMServer: require('react-dom/server.edge'),
-        element: (
-          <AppWithoutContext
-            reactServerStream={errorServerStream}
-            preinitScripts={errorPreinitScripts}
-            clientReferenceManifest={clientReferenceManifest}
-            nonce={ctx.nonce}
-          />
-        ),
-        streamOptions: {
-          nonce: ctx.nonce,
-          // Include hydration scripts in the HTML
-          bootstrapScripts: [errorBootstrapScript],
-          formState,
-        },
-      })
+      const fizzStream = await workUnitAsyncStorage.run(
+        requestStore,
+        renderToInitialFizzStream,
+        {
+          ReactDOMServer: require('react-dom/server.edge'),
+          element: (
+            <AppWithoutContext
+              reactServerStream={errorServerStream}
+              preinitScripts={errorPreinitScripts}
+              clientReferenceManifest={clientReferenceManifest}
+              nonce={ctx.nonce}
+            />
+          ),
+          streamOptions: {
+            nonce: ctx.nonce,
+            // Include hydration scripts in the HTML
+            bootstrapScripts: [errorBootstrapScript],
+            formState,
+          },
+        }
+      )
 
       /**
        * Rules of Static & Dynamic HTML:
@@ -1715,6 +1773,8 @@ async function prerenderToStream(
   workStore: WorkStore,
   tree: LoaderTree
 ): Promise<PrerenderToStreamResult> {
+  ctx.requestStore.phase = 'render'
+
   // When prerendering formState is always null. We still include it
   // because some shared APIs expect a formState value and this is slightly
   // more explicit than making it an optional function argument
@@ -1836,7 +1896,8 @@ async function prerenderToStream(
         const prospectiveRenderPrerenderStore: PrerenderStore =
           (prerenderStore = {
             type: 'prerender',
-            pathname: ctx.requestStore.url.pathname,
+            phase: 'render',
+            implicitTags: ctx.requestStore.implicitTags,
             renderSignal: flightController.signal,
             cacheSignal,
             // During the prospective render we don't want to synchronously abort on dynamic access
@@ -1848,13 +1909,8 @@ async function prerenderToStream(
             // will track it again there
             dynamicTracking: null,
             revalidate: INFINITE_CACHE,
-            tags: null,
+            tags: [...ctx.requestStore.implicitTags],
           })
-        // This cycle is a bit unfortunate.
-        prospectiveRenderPrerenderStore.tags = getImplicitTags(
-          workStore,
-          prospectiveRenderPrerenderStore
-        )
 
         let reactServerIsDynamic = false
         function onError(err: unknown) {
@@ -1934,7 +1990,8 @@ async function prerenderToStream(
 
         const finalRenderPrerenderStore: PrerenderStore = (prerenderStore = {
           type: 'prerender',
-          pathname: ctx.requestStore.url.pathname,
+          phase: 'render',
+          implicitTags: ctx.requestStore.implicitTags,
           renderSignal: flightController.signal,
           // During the final prerender we don't need to track cache access so we omit the signal
           cacheSignal: null,
@@ -1943,13 +2000,8 @@ async function prerenderToStream(
           controller: flightController,
           dynamicTracking,
           revalidate: INFINITE_CACHE,
-          tags: null,
+          tags: [...ctx.requestStore.implicitTags],
         })
-        // This cycle is a bit unfortunate.
-        finalRenderPrerenderStore.tags = getImplicitTags(
-          workStore,
-          finalRenderPrerenderStore
-        )
 
         function onPostpone(reason: string) {
           if (
@@ -1998,7 +2050,8 @@ async function prerenderToStream(
         const SSRController = new AbortController()
         const ssrPrerenderStore: PrerenderStore = {
           type: 'prerender',
-          pathname: ctx.requestStore.url.pathname,
+          phase: 'render',
+          implicitTags: ctx.requestStore.implicitTags,
           renderSignal: SSRController.signal,
           // For HTML Generation we don't need to track cache reads (RSC only)
           cacheSignal: null,
@@ -2009,10 +2062,8 @@ async function prerenderToStream(
           // dynamic during SSR
           dynamicTracking,
           revalidate: INFINITE_CACHE,
-          tags: null,
+          tags: [...ctx.requestStore.implicitTags],
         }
-        // This cycle is a bit unfortunate.
-        ssrPrerenderStore.tags = getImplicitTags(workStore, ssrPrerenderStore)
         let SSRIsDynamic = false
         function SSROnError(err: unknown, errorInfo: ErrorInfo) {
           if (
@@ -2215,7 +2266,8 @@ async function prerenderToStream(
         const prospectiveRenderPrerenderStore: PrerenderStore =
           (prerenderStore = {
             type: 'prerender',
-            pathname: ctx.requestStore.url.pathname,
+            phase: 'render',
+            implicitTags: ctx.requestStore.implicitTags,
             renderSignal: flightController.signal,
             cacheSignal,
             // When PPR is off we can synchronously abort the prospective render because we will
@@ -2224,13 +2276,8 @@ async function prerenderToStream(
             controller: flightController,
             dynamicTracking,
             revalidate: INFINITE_CACHE,
-            tags: null,
+            tags: [...ctx.requestStore.implicitTags],
           })
-        // This cycle is a bit unfortunate.
-        prospectiveRenderPrerenderStore.tags = getImplicitTags(
-          workStore,
-          prospectiveRenderPrerenderStore
-        )
 
         const firstAttemptRSCPayload = await workUnitAsyncStorage.run(
           prospectiveRenderPrerenderStore,
@@ -2302,25 +2349,22 @@ async function prerenderToStream(
 
         const finalRenderPrerenderStore: PrerenderStore = (prerenderStore = {
           type: 'prerender',
-          pathname: ctx.requestStore.url.pathname,
+          phase: 'render',
+          implicitTags: ctx.requestStore.implicitTags,
           renderSignal: flightController.signal,
           // During the final prerender we don't need to track cache access so we omit the signal
           cacheSignal: null,
           controller: flightController,
           dynamicTracking,
           revalidate: INFINITE_CACHE,
-          tags: null,
+          tags: [...ctx.requestStore.implicitTags],
         })
-        // This cycle is a bit unfortunate.
-        finalRenderPrerenderStore.tags = getImplicitTags(
-          workStore,
-          finalRenderPrerenderStore
-        )
 
         const SSRController = new AbortController()
         const ssrPrerenderStore: PrerenderStore = {
           type: 'prerender',
-          pathname: ctx.requestStore.url.pathname,
+          phase: 'render',
+          implicitTags: ctx.requestStore.implicitTags,
           renderSignal: SSRController.signal,
           // For HTML Generation we don't need to track cache reads (RSC only)
           cacheSignal: null,
@@ -2331,10 +2375,8 @@ async function prerenderToStream(
           // dynamic during SSR
           dynamicTracking,
           revalidate: INFINITE_CACHE,
-          tags: null,
+          tags: [...ctx.requestStore.implicitTags],
         }
-        // This cycle is a bit unfortunate.
-        ssrPrerenderStore.tags = getImplicitTags(workStore, ssrPrerenderStore)
 
         const finalAttemptRSCPayload = await workUnitAsyncStorage.run(
           finalRenderPrerenderStore,
@@ -2509,16 +2551,12 @@ async function prerenderToStream(
       )
       const reactServerPrerenderStore: PrerenderStore = (prerenderStore = {
         type: 'prerender-ppr',
-        pathname: ctx.requestStore.url.pathname,
+        phase: 'render',
+        implicitTags: ctx.requestStore.implicitTags,
         dynamicTracking,
         revalidate: INFINITE_CACHE,
-        tags: null,
+        tags: [...ctx.requestStore.implicitTags],
       })
-      // This cycle is a bit unfortunate.
-      reactServerPrerenderStore.tags = getImplicitTags(
-        workStore,
-        reactServerPrerenderStore
-      )
       const RSCPayload = await workUnitAsyncStorage.run(
         reactServerPrerenderStore,
         getRSCPayload,
@@ -2542,14 +2580,12 @@ async function prerenderToStream(
 
       const ssrPrerenderStore: PrerenderStore = {
         type: 'prerender-ppr',
-        pathname: ctx.requestStore.url.pathname,
+        phase: 'render',
+        implicitTags: ctx.requestStore.implicitTags,
         dynamicTracking,
         revalidate: INFINITE_CACHE,
-        tags: null,
+        tags: [...ctx.requestStore.implicitTags],
       }
-      // This cycle is a bit unfortunate.
-      ssrPrerenderStore.tags = getImplicitTags(workStore, ssrPrerenderStore)
-
       const prerender = require('react-dom/static.edge')
         .prerender as (typeof import('react-dom/static.edge'))['prerender']
       const { prelude, postponed } = await workUnitAsyncStorage.run(
@@ -2711,16 +2747,11 @@ async function prerenderToStream(
     } else {
       const prerenderLegacyStore: PrerenderStore = (prerenderStore = {
         type: 'prerender-legacy',
-        pathname: ctx.requestStore.url.pathname,
+        phase: 'render',
+        implicitTags: ctx.requestStore.implicitTags,
         revalidate: INFINITE_CACHE,
-        tags: null,
+        tags: [...ctx.requestStore.implicitTags],
       })
-      // This cycle is a bit unfortunate.
-      prerenderLegacyStore.tags = getImplicitTags(
-        workStore,
-        prerenderLegacyStore
-      )
-
       // This is a regular static generation. We don't do dynamic tracking because we rely on
       // the old-school dynamic error handling to bail out of static generation
       const RSCPayload = await workUnitAsyncStorage.run(
@@ -2873,13 +2904,11 @@ async function prerenderToStream(
 
     const prerenderLegacyStore: PrerenderStore = (prerenderStore = {
       type: 'prerender-legacy',
-      pathname: ctx.requestStore.url.pathname,
+      phase: 'render',
+      implicitTags: ctx.requestStore.implicitTags,
       revalidate: INFINITE_CACHE,
-      tags: null,
+      tags: [...ctx.requestStore.implicitTags],
     })
-    // This cycle is a bit unfortunate.
-    prerenderLegacyStore.tags = getImplicitTags(workStore, prerenderLegacyStore)
-
     const errorRSCPayload = await workUnitAsyncStorage.run(
       prerenderLegacyStore,
       getErrorRSCPayload,
