@@ -408,7 +408,7 @@ pub fn should_skip_tree_shaking(m: &Program, special_exports: &[RcStr]) -> bool 
                     // See collect_next_dynamic_imports. We need to preserve the import of
                     // `next/dynamic`.
                     if src.value == "next/dynamic" {
-                        return false;
+                        return true;
                     }
 
                     if let Some(with) = with.as_deref().and_then(|v| v.as_import_with()) {
