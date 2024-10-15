@@ -52,14 +52,18 @@ export async function exportAppRoute(
 ): Promise<ExportRouteResult> {
   // Ensure that the URL is absolute.
   req.url = `http://localhost:3000${req.url}`
+  const afterRunner = new AfterRunner({
+    onClose: (callback) => res.on('close', callback),
+  })
 
   // Adapt the request and response to the Next.js request and response.
   const request = NextRequestAdapter.fromNodeNextRequest(
-    new NodeNextRequest(req),
-    signalFromNodeResponse(res)
+    new NodeNextRequest(req, { waitUntil: afterRunner.context.waitUntil }),
+    {
+      signal: signalFromNodeResponse(res),
+      onClose: afterRunner.context.onClose,
+    }
   )
-
-  const afterRunner = new AfterRunner()
 
   // Create the context for the handler. This contains the params from
   // the route and the context for the request.
@@ -81,11 +85,9 @@ export async function exportAppRoute(
       nextExport: true,
       supportsDynamicResponse: false,
       incrementalCache,
-      waitUntil: afterRunner.context.waitUntil,
-      onClose: afterRunner.context.onClose,
-      onAfterTaskError: afterRunner.context.onTaskError,
       cacheLifeProfiles,
       buildId,
+      onAfterTaskError: afterRunner.context.onTaskError,
     },
   }
 
@@ -120,6 +122,9 @@ export async function exportAppRoute(
     }
 
     const blob = await response.blob()
+    // nothing is piped into `res` like it'd be during a normal request,
+    // but `after` relies on `onClose` firing, so we end the response manually
+    res.end()
 
     // TODO(after): if we abort a prerender because of an error in an after-callback
     // we should probably communicate that better (and not log the error twice)

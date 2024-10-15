@@ -259,8 +259,9 @@ export type RenderOpts = PagesRenderOptsPartial & AppRenderOptsPartial
 
 export type LoadedRenderOpts = RenderOpts &
   LoadComponentsReturnType &
-  RequestLifecycleOpts
+  Pick<RequestLifecycleOpts, 'onAfterTaskError'>
 
+// TODO: split this type
 export type RequestLifecycleOpts = {
   waitUntil: ((promise: Promise<any>) => void) | undefined
   onClose: ((callback: () => void) => void) | undefined
@@ -1776,7 +1777,7 @@ export default abstract class Server<
     )
   }
 
-  private getWaitUntil(): WaitUntil | undefined {
+  protected getWaitUntil(): WaitUntil | undefined {
     const builtinRequestContext = getBuiltinRequestContext()
     if (builtinRequestContext) {
       // the platform provided a request context.
@@ -1785,16 +1786,16 @@ export default abstract class Server<
       return builtinRequestContext.waitUntil
     }
 
-    if (process.env.__NEXT_TEST_MODE) {
-      // we're in a test, use a no-op.
-      return Server.noopWaitUntil
-    }
-
-    if (this.minimalMode || process.env.NEXT_RUNTIME === 'edge') {
+    if (this.minimalMode) {
       // we're built for a serverless environment, and `waitUntil` is not available,
       // but using a noop would likely lead to incorrect behavior,
       // because we have no way of keeping the invocation alive.
       // return nothing, and `unstable_after` will error if used.
+      //
+      // NOTE: for edge functions, `NextWebServer` always runs in minimal mode.
+      // in next dev/start, it'll be in an edge runtime sandbox.
+      // but in that case, `waitUntil` will be passed in via `NodejsRequestData`
+      // and then directly into `WebNextResponse`, so we'll never hit this codepath
       return undefined
     }
 
@@ -2469,8 +2470,6 @@ export default abstract class Server<
         isDraftMode: isPreviewMode,
         isServerAction,
         postponed,
-        waitUntil: this.getWaitUntil(),
-        onClose: res.onClose.bind(res),
         onAfterTaskError: undefined,
         // only available in dev
         setAppIsrStatus: (this as any).setAppIsrStatus,
@@ -2516,8 +2515,6 @@ export default abstract class Server<
               incrementalCache,
               cacheLifeProfiles: this.nextConfig.experimental?.cacheLife,
               isRevalidate: isSSG,
-              waitUntil: this.getWaitUntil(),
-              onClose: res.onClose.bind(res),
               onAfterTaskError: undefined,
               onInstrumentationRequestError:
                 this.renderOpts.onInstrumentationRequestError,
@@ -2526,10 +2523,10 @@ export default abstract class Server<
           }
 
           try {
-            const request = NextRequestAdapter.fromNodeNextRequest(
-              req,
-              signalFromNodeResponse(res.originalResponse)
-            )
+            const request = NextRequestAdapter.fromNodeNextRequest(req, {
+              signal: signalFromNodeResponse(res.originalResponse),
+              onClose: res.onClose.bind(res),
+            })
 
             const response = await routeModule.handle(request, context)
 
