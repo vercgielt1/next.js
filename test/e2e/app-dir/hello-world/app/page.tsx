@@ -1,3 +1,6 @@
+import { Component, logError } from './Component'
+
 export default function Page() {
-  return <p>hello world</p>
+  logError()
+  return <Component />
 }
