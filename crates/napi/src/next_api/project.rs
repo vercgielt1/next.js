@@ -1099,15 +1099,25 @@ pub async fn project_trace_source(
                 }
             };
 
-            let Some(source_file) = original_file.strip_prefix(SOURCE_MAP_PREFIX) else {
-                bail!("Original file ({}) outside project", original_file)
-            };
+            let project_path_uri = format!(
+                "{}/",
+                &*project
+                    .container
+                    .project()
+                    .project_path()
+                    .fs()
+                    .root()
+                    .uri()
+                    .await?
+            );
 
             let (source_file, is_internal) =
-                if let Some(source_file) = source_file.strip_prefix("[project]/") {
+                if let Some(source_file) = original_file.strip_prefix(&project_path_uri) {
                     (source_file, false)
-                } else {
+                } else if let Some(source_file) = original_file.strip_prefix(SOURCE_MAP_PREFIX) {
                     (source_file, true)
+                } else {
+                    bail!("Original file ({}) outside project", original_file)
                 };
 
             Ok(Some(StackFrame {
