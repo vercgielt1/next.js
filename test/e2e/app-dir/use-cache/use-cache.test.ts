@@ -1,5 +1,5 @@
 import { nextTestSetup } from 'e2e-utils'
-import { retry } from 'next-test-utils'
+import { retry, waitFor } from 'next-test-utils'
 
 const GENERIC_RSC_ERROR =
   'An error occurred in the Server Components render. The specific message is omitted in production builds to avoid leaking sensitive details. A digest property is included on this error instance which may provide additional details about the nature of the error.'
@@ -231,4 +231,29 @@ describe('use-cache', () => {
       expect(meta.headers['x-next-cache-tags']).toContain('a,c,b')
     })
   }
+
+  it('should be able to revalidate a page using', async () => {
+    const browser = await next.browser(`/form?a`)
+    const time1 = await browser.waitForElementByCss('#t').text()
+
+    await browser.loadPage(new URL(`/form?b`, next.url).toString())
+
+    const time2 = await browser.waitForElementByCss('#t').text()
+
+    expect(time1).toBe(time2)
+
+    await browser.elementByCss('#refresh').click()
+
+    await waitFor(500)
+
+    const time3 = await browser.waitForElementByCss('#t').text()
+
+    expect(time3).not.toBe(time2)
+
+    // Reloading again should ideally be the same value but because the Action seeds
+    // the cache with real params as the argument it has a different cache key.
+    // await browser.loadPage(new URL(`/form?c`, next.url).toString())
+    // const time4 = await browser.waitForElementByCss('#t').text()
+    // expect(time4).toBe(time3);
+  })
 })
