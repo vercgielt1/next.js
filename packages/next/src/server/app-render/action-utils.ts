@@ -23,8 +23,8 @@ export function createServerModuleMap({
             process.env.NEXT_RUNTIME === 'edge' ? 'edge' : 'node'
           ][id].workers[normalizeWorkerPageName(pageName)]
 
-        if (typeof workerEntry === 'string') {
-          return { id: workerEntry, name: id, chunks: [] }
+        if (!workerEntry) {
+          return undefined
         }
 
         const { moduleId, async } = workerEntry
