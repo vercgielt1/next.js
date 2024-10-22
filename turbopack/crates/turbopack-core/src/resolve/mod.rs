@@ -65,11 +65,34 @@ use crate::{error::PrettyPrintError, issue::IssueSeverity};
 pub enum ModuleResolveResultItem {
     Module(Vc<Box<dyn Module>>),
     OutputAsset(Vc<Box<dyn OutputAsset>>),
-    External(RcStr, ExternalType),
+    External {
+        /// uri, path, reference, etc.
+        name: RcStr,
+        typ: ExternalType,
+        module: Option<Vc<Box<dyn Module>>>,
+    },
     Ignore,
     Error(Vc<RcStr>),
     Empty,
     Custom(u8),
+}
+
+impl TryFrom<ResolveResultItem> for ModuleResolveResultItem {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ResolveResultItem) -> Result<Self> {
+        Ok(match value {
+            ResolveResultItem::Source(_) | ResolveResultItem::External { .. } => {
+                bail!(
+                    "Unexpected variant in TryFrom<ResolveResultItem> for ModuleResolveResultItem"
+                )
+            }
+            ResolveResultItem::Ignore => ModuleResolveResultItem::Ignore,
+            ResolveResultItem::Error(vc) => ModuleResolveResultItem::Error(vc),
+            ResolveResultItem::Empty => ModuleResolveResultItem::Empty,
+            ResolveResultItem::Custom(u8) => ModuleResolveResultItem::Custom(u8),
+        })
+    }
 }
 
 #[turbo_tasks::value(shared)]
@@ -392,7 +415,12 @@ impl Display for ExternalType {
 #[derive(Clone, Debug)]
 pub enum ResolveResultItem {
     Source(Vc<Box<dyn Source>>),
-    External(RcStr, ExternalType),
+    External {
+        /// uri, path, reference, etc.
+        name: RcStr,
+        typ: ExternalType,
+        source: Option<Vc<Box<dyn Source>>>,
+    },
     Ignore,
     Error(Vc<RcStr>),
     Empty,
@@ -472,10 +500,23 @@ impl ValueToString for ResolveResult {
                 ResolveResultItem::Source(a) => {
                     result.push_str(&a.ident().to_string().await?);
                 }
-                ResolveResultItem::External(s, ty) => {
+                ResolveResultItem::External {
+                    name: s,
+                    typ: ty,
+                    source: opt_source,
+                } => {
                     result.push_str("external ");
                     result.push_str(s);
-                    write!(result, " ({})", ty)?;
+                    write!(
+                        result,
+                        " ({}) {}",
+                        ty,
+                        if opt_source.is_some() {
+                            "with source"
+                        } else {
+                            ""
+                        }
+                    )?;
                 }
                 ResolveResultItem::Ignore => {
                     result.push_str("ignore");
@@ -670,9 +711,15 @@ impl ResolveResult {
                             request,
                             match item {
                                 ResolveResultItem::Source(source) => asset_fn(source).await?,
-                                ResolveResultItem::External(s, ty) => {
-                                    ModuleResolveResultItem::External(s, ty)
-                                }
+                                ResolveResultItem::External {
+                                    name,
+                                    typ,
+                                    source: _,
+                                } => ModuleResolveResultItem::External {
+                                    name,
+                                    typ,
+                                    module: None,
+                                },
                                 ResolveResultItem::Ignore => ModuleResolveResultItem::Ignore,
                                 ResolveResultItem::Empty => ModuleResolveResultItem::Empty,
                                 ResolveResultItem::Error(e) => ModuleResolveResultItem::Error(e),
@@ -682,6 +729,29 @@ impl ResolveResult {
                             },
                         ))
                     }
+                })
+                .try_join()
+                .await?
+                .into_iter()
+                .collect(),
+            affecting_sources: self.affecting_sources.clone(),
+        })
+    }
+
+    pub async fn map_items_module<A, AF>(&self, source_fn: A) -> Result<ModuleResolveResult>
+    where
+        A: Fn(ResolveResultItem) -> AF,
+        AF: Future<Output = Result<ModuleResolveResultItem>>,
+    {
+        Ok(ModuleResolveResult {
+            primary: self
+                .primary
+                .iter()
+                .map(|(request, item)| {
+                    let asset_fn = &source_fn;
+                    let request = request.clone();
+                    let item = item.clone();
+                    async move { Ok((request, asset_fn(item).await?)) }
                 })
                 .try_join()
                 .await?
@@ -1825,7 +1895,11 @@ async fn resolve_internal_inline(
                 let uri: RcStr = format!("{}{}", protocol, remainder).into();
                 ResolveResult::primary_with_key(
                     RequestKey::new(uri.clone()),
-                    ResolveResultItem::External(uri, ExternalType::Url),
+                    ResolveResultItem::External {
+                        name: uri,
+                        typ: ExternalType::Url,
+                        source: None,
+                    },
                 )
                 .into()
             }
