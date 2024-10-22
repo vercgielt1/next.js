@@ -18,10 +18,19 @@ export function createServerModuleMap({
     {},
     {
       get: (_, id: string) => {
-        const workerEntry =
+        const workers =
           serverActionsManifest[
             process.env.NEXT_RUNTIME === 'edge' ? 'edge' : 'node'
-          ][id].workers[normalizeWorkerPageName(pageName)]
+          ][id].workers
+        let workerEntry = workers[normalizeWorkerPageName(pageName)]
+
+        if (workerEntry === undefined) {
+          // Workaround due to faulty singleton.
+          for (let key in workers) {
+            workerEntry = workers[key]
+            break
+          }
+        }
 
         if (typeof workerEntry === 'string') {
           return { id: workerEntry, name: id, chunks: [] }
