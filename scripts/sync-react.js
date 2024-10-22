@@ -348,8 +348,20 @@ Or, run this command with no arguments to use the most recently published versio
     if (manifest.dependencies['react']) {
       manifest.dependencies['react'] = newVersionStr
     }
+    if (manifest.devDependencies['react']) {
+      manifest.devDependencies['react'] = newVersionStr
+    }
+    if (manifest.peerDependencies['react']) {
+      manifest.peerDependencies['react'] = newVersionStr
+    }
     if (manifest.dependencies['react-dom']) {
       manifest.dependencies['react-dom'] = newVersionStr
+    }
+    if (manifest.devDependencies['react-dom']) {
+      manifest.devDependencies['react-dom'] = newVersionStr
+    }
+    if (manifest.peerDependencies['react-dom']) {
+      manifest.peerDependencies['react-dom'] = newVersionStr
     }
     await fsp.writeFile(
       packageJsonPath,
