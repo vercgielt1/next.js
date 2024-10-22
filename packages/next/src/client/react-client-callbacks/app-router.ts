@@ -13,10 +13,13 @@ export const onCaughtError: HydrationOptions['onCaughtError'] = (
   err,
   errorInfo
 ) => {
+  
   // Skip certain custom errors which are not expected to be reported on client
   if (isBailoutToCSRError(err) || isNextRouterError(err)) return
 
   const stitchedError = getReactStitchedError(err)
+
+  console.log('onCaughtError', stitchedError)
 
   if (process.env.NODE_ENV === 'development') {
     const errorBoundaryComponent = errorInfo?.errorBoundary?.constructor
@@ -51,7 +54,7 @@ export const onCaughtError: HydrationOptions['onCaughtError'] = (
 
     const originErrorStack = isError(err) ? err.stack || '' : ''
 
-    // Always log the modified error instance so the console.error interception side can pick it up easily without constructing an error again.
+    // Log the modified error message with stack so without being intercepted again.
     originConsoleError(originErrorStack + '\n\n' + errorLocation)
     handleClientError(stitchedError, [])
   } else {
@@ -63,10 +66,13 @@ export const onUncaughtError: HydrationOptions['onUncaughtError'] = (
   err,
   errorInfo
 ) => {
+  console.log('onUncaughtError', err, errorInfo)
   // Skip certain custom errors which are not expected to be reported on client
   if (isBailoutToCSRError(err) || isNextRouterError(err)) return
 
   const stitchedError = getReactStitchedError(err)
+
+  console.log('stitchedError', stitchedError)
 
   if (process.env.NODE_ENV === 'development') {
     const componentThatErroredFrame = errorInfo?.componentStack?.split('\n')[1]
@@ -87,8 +93,8 @@ export const onUncaughtError: HydrationOptions['onUncaughtError'] = (
       : `The above error occurred in one of your components.`
 
     const errStack = (stitchedError as any).stack || ''
+    // Log the modified error message with stack so without being intercepted again.
     originConsoleError(errStack + '\n\n' + errorLocation)
-    // Always log the modified error instance so the console.error interception side can pick it up easily without constructing an error again.
     reportGlobalError(stitchedError)
   } else {
     reportGlobalError(err)

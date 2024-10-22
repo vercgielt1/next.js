@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { attachHydrationErrorState } from './attach-hydration-error-state'
 import { isNextRouterError } from '../../../is-next-router-error'
 import { storeHydrationErrorStateFromConsoleArgs } from './hydration-error-info'
@@ -13,6 +13,27 @@ const errorQueue: Array<Error> = []
 const errorHandlers: Array<ErrorHandler> = []
 const rejectionQueue: Array<Error> = []
 const rejectionHandlers: Array<ErrorHandler> = []
+let errorsBeforeHandlerReady: Array<Error> = []
+
+let listeners: any[] = []
+const errorsBeforeHandlerReadyStore = {
+  subscribe(listener: () => void) {
+    listeners = [...listeners, listener]
+    return () => {
+      listeners = listeners.filter((l) => l !== listener)
+    }
+  },
+  getState() {
+    return errorsBeforeHandlerReady
+  },
+  addItem(item: Error) {
+    errorsBeforeHandlerReady = [...errorsBeforeHandlerReady, item]
+    for (const listener of listeners) {
+      listener()
+    }
+  }
+}
+
 
 export function handleClientError(
   originError: unknown,
@@ -38,7 +59,8 @@ export function handleClientError(
 
 export function useErrorHandler(
   handleOnUnhandledError: ErrorHandler,
-  handleOnUnhandledRejection: ErrorHandler
+  handleOnUnhandledRejection: ErrorHandler,
+  forceUpdate: () => void
 ) {
   useEffect(() => {
     // Handle queued errors.
@@ -58,6 +80,62 @@ export function useErrorHandler(
       )
     }
   }, [handleOnUnhandledError, handleOnUnhandledRejection])
+
+  // const pendingErrors = useSyncExternalStore(
+  //   errorsBeforeHandlerReadyStore.subscribe,
+  //   errorsBeforeHandlerReadyStore.getState,
+  //   () => undefined,
+  // )
+  
+}
+
+function subscribeErrors() {
+  function onUnhandledError(event: WindowEventMap['error']): void | boolean {
+    if (isNextRouterError(event.error)) {
+      event.preventDefault()
+      return false
+    }
+    handleClientError(event.error, [])
+  }
+
+  function onUnhandledRejection(ev: WindowEventMap['unhandledrejection']): void {
+    const reason = ev?.reason
+    if (isNextRouterError(reason)) {
+      ev.preventDefault()
+      return
+    }
+
+    if (
+      !reason ||
+      !(reason instanceof Error) ||
+      typeof reason.stack !== 'string'
+    ) {
+      // A non-error was thrown, we don't have anything to show. :-(
+      return
+    }
+
+    const e = reason
+    rejectionQueue.push(e)
+    for (const handler of rejectionHandlers) {
+      handler(e)
+    }
+  }
+
+
+  window.addEventListener(
+    'error',
+    onUnhandledError
+  )
+
+  window.addEventListener(
+    'unhandledrejection',
+    onUnhandledRejection
+  )
+
+  return () => {
+    window.removeEventListener('error', onUnhandledError)
+    window.removeEventListener('unhandledrejection', onUnhandledRejection)
+  }
 }
 
 export function handleGlobalErrors() {
@@ -67,41 +145,6 @@ export function handleGlobalErrors() {
       Error.stackTraceLimit = 50
     } catch {}
 
-    window.addEventListener(
-      'error',
-      (event: WindowEventMap['error']): void | boolean => {
-        if (isNextRouterError(event.error)) {
-          event.preventDefault()
-          return false
-        }
-        handleClientError(event.error, [])
-      }
-    )
-
-    window.addEventListener(
-      'unhandledrejection',
-      (ev: WindowEventMap['unhandledrejection']): void => {
-        const reason = ev?.reason
-        if (isNextRouterError(reason)) {
-          ev.preventDefault()
-          return
-        }
-
-        if (
-          !reason ||
-          !(reason instanceof Error) ||
-          typeof reason.stack !== 'string'
-        ) {
-          // A non-error was thrown, we don't have anything to show. :-(
-          return
-        }
-
-        const e = reason
-        rejectionQueue.push(e)
-        for (const handler of rejectionHandlers) {
-          handler(e)
-        }
-      }
-    )
+    subscribeErrors()    
   }
 }

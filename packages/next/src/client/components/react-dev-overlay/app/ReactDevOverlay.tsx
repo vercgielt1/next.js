@@ -1,4 +1,4 @@
-import * as React from 'react'
+import React, { useMemo } from 'react'
 import { ACTION_UNHANDLED_ERROR, type OverlayState } from '../shared'
 
 import { ShadowPortal } from '../internal/components/ShadowPortal'
@@ -15,32 +15,34 @@ import type { Dispatcher } from './hot-reloader-client'
 import { getReactStitchedError } from '../internal/helpers/stitched-error'
 
 interface ReactDevOverlayState {
-  reactError: SupportedErrorEvent | null
+  hasReactError: boolean // SupportedErrorEvent | null
 }
 export default class ReactDevOverlay extends React.PureComponent<
   {
     state: OverlayState
     dispatcher?: Dispatcher
+    reactError?: unknown
     children: React.ReactNode
     onReactError: (error: Error) => void
   },
   ReactDevOverlayState
 > {
-  state = { reactError: null }
+  state = { hasReactError: false }
+
 
   static getDerivedStateFromError(error: Error): ReactDevOverlayState {
-    if (!error.stack) return { reactError: null }
+    if (!error.stack) return { hasReactError: false }
 
-    const stitchedError = getReactStitchedError(error)
     return {
-      reactError: {
-        id: 0,
-        event: {
-          type: ACTION_UNHANDLED_ERROR,
-          reason: stitchedError,
-          frames: parseStack(stitchedError.stack || ''),
-        },
-      },
+      hasReactError: true,
+      // {
+      //   id: 0,
+      //   event: {
+      //     type: ACTION_UNHANDLED_ERROR,
+      //     reason: error,
+      //     frames: parseStack(error.stack || ''),
+      //   },
+      // },
     }
   }
 
@@ -49,17 +51,31 @@ export default class ReactDevOverlay extends React.PureComponent<
   }
 
   render() {
-    const { state, children, dispatcher } = this.props
-    const { reactError } = this.state
+    const { state, children, dispatcher, reactError: originReactError } = this.props
+    const { hasReactError } = this.state
+    // console.log('originReactError', originReactError)
+    // @ts-ignore
+    const reactError: SupportedErrorEvent | null = originReactError
+      ? {
+          id: 0,
+          event: {
+            type: ACTION_UNHANDLED_ERROR,
+            reason: originReactError,
+            frames: parseStack((originReactError as Error).stack || ''),
+          },
+        }
+      : null
 
     const hasBuildError = state.buildError != null
     const hasRuntimeErrors = Boolean(state.errors.length)
     const hasStaticIndicator = state.staticIndicator
     const debugInfo = state.debugInfo
 
+    console.log('state.errors', state.errors)
+
     return (
       <>
-        {reactError ? (
+        {hasReactError ? (
           <html>
             <head></head>
             <body></body>
@@ -82,7 +98,7 @@ export default class ReactDevOverlay extends React.PureComponent<
             />
           ) : (
             <>
-              {reactError ? (
+              {(hasReactError && reactError) ? (
                 <Errors
                   isAppDir={true}
                   versionInfo={state.versionInfo}

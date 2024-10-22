@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, startTransition, useMemo, useRef } from 'react'
+import { useCallback, useEffect, startTransition, useMemo, useRef, useState, useReducer } from 'react'
 import stripAnsi from 'next/dist/compiled/strip-ansi'
 import formatWebpackMessages from '../internal/helpers/format-webpack-messages'
 import { useRouter } from '../../navigation'
@@ -37,6 +37,7 @@ import { REACT_REFRESH_FULL_RELOAD_FROM_ERROR } from '../shared'
 import type { HydrationErrorState } from '../internal/helpers/hydration-error-info'
 import type { DebugInfo } from '../types'
 import { useUntrackedPathname } from '../../navigation-untracked'
+import { getReactStitchedError } from '../internal/helpers/stitched-error'
 
 export interface Dispatcher {
   onBuildOk(): void
@@ -526,6 +527,7 @@ export default function HotReload({
   assetPrefix: string
   children?: ReactNode
 }) {
+  const [, forceUpdate] = useReducer(s => !s, false)
   const [state, dispatch] = useErrorOverlayReducer()
 
   const dispatcher = useMemo<Dispatcher>(() => {
@@ -556,6 +558,7 @@ export default function HotReload({
 
   const handleOnUnhandledError = useCallback(
     (error: Error): void => {
+      console.log('parent onUnhandledError', error)
       const errorDetails = (error as any).details as
         | HydrationErrorState
         | undefined
@@ -563,10 +566,14 @@ export default function HotReload({
       const componentStackTrace =
         (error as any)._componentStack || errorDetails?.componentStack
       const warning = errorDetails?.warning
+      const stitchedError = getReactStitchedError(error)
+      
+      RuntimeErrorHandler.hadRuntimeError = true
+
       dispatch({
         type: ACTION_UNHANDLED_ERROR,
-        reason: error,
-        frames: parseStack(error.stack),
+        reason: stitchedError,
+        frames: parseStack(stitchedError.stack || ''),
         componentStackFrames:
           typeof componentStackTrace === 'string'
             ? parseComponentStack(componentStackTrace)
@@ -576,20 +583,27 @@ export default function HotReload({
     },
     [dispatch]
   )
+  
   const handleOnUnhandledRejection = useCallback(
     (reason: Error): void => {
+      console.log('parent onUnhandledRejection', reason)
+      const stitchedError = getReactStitchedError(reason)
       dispatch({
         type: ACTION_UNHANDLED_REJECTION,
-        reason: reason,
-        frames: parseStack(reason.stack!),
+        reason: stitchedError,
+        frames: parseStack(stitchedError.stack || ''),
       })
     },
     [dispatch]
   )
-  const handleOnReactError = useCallback(() => {
+  const [reactError, setReactError] = useState<unknown>(null)
+  const handleOnReactError = useCallback((reactError: unknown) => {
+    setReactError(
+      getReactStitchedError(reactError)
+    )
     RuntimeErrorHandler.hadRuntimeError = true
   }, [])
-  useErrorHandler(handleOnUnhandledError, handleOnUnhandledRejection)
+  useErrorHandler(handleOnUnhandledError, handleOnUnhandledRejection, forceUpdate)
 
   const webSocketRef = useWebsocket(assetPrefix)
   useWebsocketPing(webSocketRef)
@@ -675,8 +689,9 @@ export default function HotReload({
 
   return (
     <ReactDevOverlay
-      onReactError={handleOnReactError}
+      onReactError={() => {}}
       state={state}
+      reactError={reactError}
       dispatcher={dispatcher}
     >
       {children}
