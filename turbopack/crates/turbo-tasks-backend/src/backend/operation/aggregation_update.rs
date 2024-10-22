@@ -660,8 +660,9 @@ impl AggregationUpdateQueue {
                     // Add the same amount of upper edges
                     if update_count!(task, Upper { task: upper_id }, count) {
                         if !upper_id.is_transient() {
-                            if update_ucount_and_get!(task, PersistentUpperCount, 1).count_ones()
-                                == 1
+                            #[allow(clippy::collapsible_if, reason = "readablility")]
+                            if update_ucount_and_get!(task, PersistentUpperCount, 1)
+                                .is_power_of_two()
                             {
                                 self.optimize_queue.insert(task_id);
                             }
@@ -1026,8 +1027,7 @@ impl AggregationUpdateQueue {
             });
             if !upper_ids.is_empty() {
                 if update_ucount_and_get!(follower, PersistentUpperCount, persistent_uppers)
-                    .count_ones()
-                    == 1
+                    .is_power_of_two()
                 {
                     self.optimize_queue.insert(new_follower_id);
                 }
@@ -1117,7 +1117,8 @@ impl AggregationUpdateQueue {
             let mut follower = ctx.task(follower_id, TaskDataCategory::Meta);
             if update_count!(follower, Upper { task: upper_id }, 1) {
                 if !upper_id.is_transient() {
-                    if update_ucount_and_get!(follower, PersistentUpperCount, 1).count_ones() == 1 {
+                    #[allow(clippy::collapsible_if, reason = "readablility")]
+                    if update_ucount_and_get!(follower, PersistentUpperCount, 1).is_power_of_two() {
                         self.optimize_queue.insert(follower_id);
                     }
                 }
@@ -1223,7 +1224,8 @@ impl AggregationUpdateQueue {
             let mut follower = ctx.task(new_follower_id, TaskDataCategory::Meta);
             if update_count!(follower, Upper { task: upper_id }, 1) {
                 if !upper_id.is_transient() {
-                    if update_ucount_and_get!(follower, PersistentUpperCount, 1).count_ones() == 1 {
+                    #[allow(clippy::collapsible_if, reason = "readablility")]
+                    if update_ucount_and_get!(follower, PersistentUpperCount, 1).is_power_of_two() {
                         self.optimize_queue.insert(new_follower_id);
                     }
                 }
